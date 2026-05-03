@@ -1,0 +1,29 @@
+# Claude Code agent state — local-only, do not share
+.claude/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# Editor / OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Excel / LibreOffice lock files (created when file is open)
+.~lock.*#
+~$*
+
+# Probe / scratch scripts
+_probe*.py
+_scratch*.py
+*.bak
+
+# Logs
+*.log
