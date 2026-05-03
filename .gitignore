@@ -1,4 +1,4 @@
-# Claude Code agent state — local-only, do not share
+# Local editor / agent state
 .claude/
 
 # Python build artifacts

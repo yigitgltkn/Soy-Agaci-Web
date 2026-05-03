@@ -40,7 +40,7 @@ Doğru yol şu: **Önce Excel'i güncelle, sonra HTML'i sıfırdan oluştur.**
 
 ### Adım 2: HTML'i yeniden oluştur
 
-E�er Python yüklüysen (Mac/Linux için varsayılan):
+E�er Python yüklüysen (Mac/Linux için varsayılan):
 
 ```bash
 cd come-ahmet-soyu-kit
@@ -70,7 +70,7 @@ Hiçbir sorun değil. Şu seçeneklerden biri:
 
 1. **Excel'i güncelle, bana (veya başka bir teknisyene) gönder**, ben yeniden üreteyim
 2. **Bir akrabandan teknisyen bul** — Python bilen biri 5 dakikada yapabilir
-3. **AI sohbet botuna ver** — ChatGPT/Claude'a bu klasörü ve ne yapmak istediğini ver,
+3. **AI asistanına ver** — herhangi bir AI sohbet botuna bu klasörü ve ne yapmak istediğini ver,
    adım adım yardım eder
 
 ---
