@@ -1,4 +1,3 @@
-# Çöme Ahmet Soyu — Değişiklik Kiti
 
 Bu klasörde sitenin tüm kaynak dosyaları var. Bu klasörü güvenli bir yerde sakla
 (Google Drive, harici disk, vs.) — geleceğe yatırım.
@@ -7,7 +6,7 @@ Bu klasörde sitenin tüm kaynak dosyaları var. Bu klasörü güvenli bir yerde
 
 | Dosya | Ne İşe Yarar |
 |---|---|
-| `aile-verisi.xlsx` | **EN ÖNEMLİSİ** — Tüm aile bilgileri burada (Mehmet Bey'in hazırladığı orijinal Excel) |
+| `aile-verisi.xlsx` | **EN ÖNEMLİSİ** — Tüm aile bilgileri burada 
 | `index.html` | Şu an Netlify'da yayında olan dosya |
 | `index-template.html` | HTML şablonu (verisiz, kod) |
 | `build_tree.py` | Excel'i HTML'e çeviren Python betiği |
@@ -86,11 +85,3 @@ Excel dosyasının özellikle güvende olması önemli — ailenin tüm tarihi i
 
 ---
 
-## Site Yedekleme
-
-Site `https://ahmetsoyu.netlify.app` adresinde Netlify ücretsiz tier'da.
-Ücretsiz, sürekli açık, fatura gelmez. Detay için bana sor.
-
-İletişim:
-- Yiğit Gültekin: facebook.com/share/1BMmuU2FNi/
-- Mehmet Gültekin: facebook.com/share/1aYBdw7ggm/
