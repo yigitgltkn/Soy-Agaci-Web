@@ -1958,7 +1958,7 @@
     </div>
     <div class="edit-banner-actions">
       <button class="btn-edit btn-edit-primary" id="btn-new-person">+ Yeni Kişi</button>
-      <button class="btn-edit" id="btn-export-data">💾 Dışa aktar (data.js)</button>
+      <button class="btn-edit" id="btn-export-data" title="data.js olarak yedek indir">💾 Yedek indir</button>
       <button class="btn-edit btn-edit-ghost" id="btn-edit-close" title="Düzenleme modunu kapat">Kapat</button>
     </div>
   </div>
@@ -3476,28 +3476,35 @@ function pulseTreeNode(id) {
   setTimeout(() => node.classList.remove('pulsing'), 2600);
 }
 
-/* =========================================================s===
-   EDIT MODE — in-browser editor for adding / editing / deleting people.
-   Workflow: user unlocks with a password (friction-only, the site is static)
-   → edits live in the in-memory PEOPLE_DATA → mirrored to localStorage as a
-   draft → user clicks "Dışa aktar" to download a fresh data.js → manually
-   rebuilds index.html and uploads to Netlify.
-
-   No backend, no live writes, no real auth. Two safety nets:
-   1. Every edit is auto-saved as a draft in localStorage so a refresh
-      doesn't destroy work.
-   2. A reload offers to restore the draft if there's one.
+/* ============================================================
+   EDIT MODE — in-browser editor backed by Netlify Functions + Blobs.
+   Workflow:
+     1. User clicks "Düzenle" → password modal → POST /api/verify
+     2. Verified password is stored (memory + localStorage) so future visits
+        from the same browser go straight in.
+     3. Edits run on the in-memory PEOPLE array, then PUT /api/people with
+        the full array. The server replaces the live blob and writes a
+        timestamped snapshot for rollback (last ~50 kept).
+     4. Other visitors see the updated tree on their next page load.
+   localStorage draft is kept as an offline fallback: if a PUT fails, the
+   draft survives reload and the next successful save replays it.
+   The actual password lives in the EDIT_PASSWORD environment variable on
+   Netlify, NOT in this file. The server is the only thing that knows it.
    ============================================================ */
 
 const EDIT = {
-  // Change this to a private string before deploying. Anyone reading the
-  // source can find it — it's friction, not a real lock.
-  password: 'dagyenice',
+  password: null,                       // user-typed password, validated by server
+  passwordKey: 'comeAhmet.editPassword',
   enabled: false,
-  dirty: false,
+  dirty: false,                         // true between a local change and the next successful PUT
   draftKey: 'comeAhmet.editDraft.v1',
-  unlockKey: 'comeAhmet.editUnlocked',
   pendingDeleteId: null,
+};
+
+const NET = {
+  status: 'unknown',                    // 'unknown' | 'syncing' | 'synced' | 'error' | 'offline'
+  lastSavedAt: null,
+  lastError: null,
 };
 
 // Form state for the person modal (parent/spouse selections live here while
@@ -3613,16 +3620,18 @@ document.addEventListener('keydown', (e) => {
 /* --- Edit-mode unlock / lock --- */
 
 function isEditUnlocked() {
-  return localStorage.getItem(EDIT.unlockKey) === '1';
+  return !!EDIT.password;
 }
 
-function unlockEdit() {
-  localStorage.setItem(EDIT.unlockKey, '1');
+function unlockEdit(password) {
+  EDIT.password = password;
+  try { localStorage.setItem(EDIT.passwordKey, password); } catch (_) {}
   setEditModeUI(true);
 }
 
 function lockEdit() {
-  localStorage.removeItem(EDIT.unlockKey);
+  EDIT.password = null;
+  try { localStorage.removeItem(EDIT.passwordKey); } catch (_) {}
   setEditModeUI(false);
 }
 
@@ -3631,8 +3640,122 @@ function setEditModeUI(on) {
   document.body.classList.toggle('edit-mode-on', on);
   const banner = document.getElementById('edit-banner');
   if (banner) banner.hidden = !on;
-  updateDirtyBadge();
+  updateStatusBadge();
   maybeRenderPersonEditActions();
+}
+
+/* --- Network helpers (read & write the people array via /api/people) --- */
+
+async function fetchPeopleFromServer() {
+  NET.status = 'syncing';
+  updateStatusBadge();
+  try {
+    const res = await fetch('/api/people', { method: 'GET', cache: 'no-store' });
+    if (!res.ok) {
+      NET.status = 'error';
+      NET.lastError = 'GET /api/people → HTTP ' + res.status;
+      updateStatusBadge();
+      return null;
+    }
+    const data = await res.json();
+    if (data.empty) {
+      // Blob is unseeded — embedded data.js is still authoritative until first save.
+      NET.status = 'synced';
+      NET.lastSavedAt = null;
+      updateStatusBadge();
+      return null;
+    }
+    NET.status = 'synced';
+    NET.lastSavedAt = data.savedAt || null;
+    updateStatusBadge();
+    return Array.isArray(data.people) ? data.people : null;
+  } catch (err) {
+    NET.status = 'offline';
+    NET.lastError = err.message;
+    updateStatusBadge();
+    return null;
+  }
+}
+
+async function pushPeopleToServer() {
+  if (!EDIT.password) {
+    return { ok: false, error: 'Düzenleme parolası yok — Düzenle butonundan giriş yap.' };
+  }
+  NET.status = 'syncing';
+  updateStatusBadge();
+  try {
+    const res = await fetch('/api/people', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Edit-Password': EDIT.password,
+      },
+      body: JSON.stringify({ people: PEOPLE }),
+    });
+    if (res.status === 401) {
+      // Stored password no longer valid (rotated server-side or wrong)
+      NET.status = 'error';
+      NET.lastError = 'Parola geçersiz — yeniden giriş yapman gerek.';
+      lockEdit();
+      updateStatusBadge();
+      return { ok: false, error: NET.lastError, unauthorized: true };
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      NET.status = 'error';
+      NET.lastError = body.error || ('HTTP ' + res.status);
+      updateStatusBadge();
+      return { ok: false, error: NET.lastError };
+    }
+    const data = await res.json();
+    NET.status = 'synced';
+    NET.lastSavedAt = data.savedAt || new Date().toISOString();
+    NET.lastError = null;
+    EDIT.dirty = false;
+    discardDraft(); // server has it now; local draft no longer needed
+    updateStatusBadge();
+    return { ok: true, savedAt: data.savedAt };
+  } catch (err) {
+    NET.status = 'offline';
+    NET.lastError = err.message;
+    updateStatusBadge();
+    return { ok: false, error: NET.lastError };
+  }
+}
+
+function relTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diff < 5)    return 'şimdi';
+  if (diff < 60)   return diff + ' sn önce';
+  if (diff < 3600) return Math.floor(diff / 60) + ' dk önce';
+  if (diff < 86400) return Math.floor(diff / 3600) + ' saat önce';
+  return d.toLocaleString('tr-TR');
+}
+
+async function tryRestoreFromStoredPassword() {
+  let stored = null;
+  try { stored = localStorage.getItem(EDIT.passwordKey); } catch (_) {}
+  if (!stored) return false;
+  try {
+    const res = await fetch('/api/verify', {
+      method: 'POST',
+      headers: { 'X-Edit-Password': stored },
+    });
+    if (res.ok) {
+      EDIT.password = stored;
+      setEditModeUI(true);
+      return true;
+    }
+    if (res.status === 401) {
+      try { localStorage.removeItem(EDIT.passwordKey); } catch (_) {}
+    }
+  } catch (_) {
+    // network error — keep stored value, retry on next user action
+  }
+  return false;
 }
 
 const footerEditLink = document.getElementById('footer-edit-link');
@@ -3654,13 +3777,39 @@ if (footerEditLink) {
   });
 }
 
-document.getElementById('btn-password-submit').addEventListener('click', () => {
+document.getElementById('btn-password-submit').addEventListener('click', async () => {
   const v = document.getElementById('password-input').value;
-  if (v === EDIT.password) {
+  if (!v) return;
+  const errEl = document.getElementById('password-error');
+  errEl.hidden = true;
+  const btn = document.getElementById('btn-password-submit');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Doğrulanıyor…';
+  try {
+    const res = await fetch('/api/verify', {
+      method: 'POST',
+      headers: { 'X-Edit-Password': v },
+    });
+    if (res.status === 401) {
+      errEl.textContent = 'Parola hatalı.';
+      errEl.hidden = false;
+      return;
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      errEl.textContent = body.error || ('Sunucu hatası: ' + res.status);
+      errEl.hidden = false;
+      return;
+    }
     closeModal('modal-password');
-    unlockEdit();
-  } else {
-    document.getElementById('password-error').hidden = false;
+    unlockEdit(v);
+  } catch (err) {
+    errEl.textContent = 'Ağ hatası: ' + err.message;
+    errEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
   }
 });
 document.getElementById('password-input').addEventListener('keydown', (e) => {
@@ -3675,13 +3824,29 @@ document.getElementById('btn-edit-close').addEventListener('click', () => {
 
 /* --- Dirty / draft state --- */
 
-function updateDirtyBadge() {
+function updateStatusBadge() {
   const el = document.getElementById('edit-banner-dirty');
   if (!el) return;
-  el.innerHTML = EDIT.dirty
-    ? '<span style="color:var(--gold);">değişiklik var · dışa aktar yapılmadı</span>'
-    : 'değişiklik yok';
+  let html;
+  if (NET.status === 'syncing') {
+    html = '<span style="color:var(--gold);">⏳ kaydediliyor…</span>';
+  } else if (EDIT.dirty) {
+    html = '<span style="color:var(--gold);">değişiklik var · sunucuya yazılmadı</span>';
+  } else if (NET.status === 'error') {
+    html = '<span style="color:#ff8b8b;">⚠ ' + escapeHtml(NET.lastError || 'sunucu hatası') + '</span>';
+  } else if (NET.status === 'offline') {
+    html = '<span style="color:#ffb04a;">⚠ bağlantı yok · değişiklikler yereldedir</span>';
+  } else if (NET.status === 'synced' && NET.lastSavedAt) {
+    html = '<span style="color:#9bd0a0;">✓ kaydedildi · ' + escapeHtml(relTime(NET.lastSavedAt)) + '</span>';
+  } else if (NET.status === 'synced') {
+    html = 'değişiklik yok';
+  } else {
+    html = 'değişiklik yok';
+  }
+  el.innerHTML = html;
 }
+// Backwards-compat alias for any leftover callsites.
+const updateDirtyBadge = updateStatusBadge;
 
 function saveDraft() {
   try {
@@ -3935,7 +4100,7 @@ document.getElementById('btn-pf-save').addEventListener('click', () => {
   rebuildAllIndexes();
   EDIT.dirty = true;
   saveDraft();
-  updateDirtyBadge();
+  updateStatusBadge();
   closeModal('modal-person-form');
 
   // Re-render whatever's open
@@ -3945,6 +4110,18 @@ document.getElementById('btn-pf-save').addEventListener('click', () => {
   } else if (STATE.currentPage === 'person' && STATE.currentPerson) {
     selectPerson(STATE.currentPerson);
   }
+
+  // Push to server (fire-and-forget; status updates the banner)
+  pushPeopleToServer().then(r => {
+    if (!r.ok && r.unauthorized) {
+      // Stored password rotated server-side — re-prompt
+      const inp = document.getElementById('password-input');
+      inp.value = '';
+      document.getElementById('password-error').hidden = true;
+      openModal('modal-password');
+      setTimeout(() => inp.focus(), 80);
+    }
+  });
 });
 
 document.getElementById('btn-pf-delete').addEventListener('click', () => {
@@ -3989,7 +4166,7 @@ document.getElementById('btn-confirm-delete').addEventListener('click', () => {
   rebuildAllIndexes();
   EDIT.dirty = true;
   saveDraft();
-  updateDirtyBadge();
+  updateStatusBadge();
   closeModal('modal-delete-confirm');
 
   if (STATE.currentPerson === id) {
@@ -4002,6 +4179,17 @@ document.getElementById('btn-confirm-delete').addEventListener('click', () => {
     STATE._lastTreeCenter = null;
     renderTree();
   }
+
+  // Push to server (fire-and-forget)
+  pushPeopleToServer().then(r => {
+    if (!r.ok && r.unauthorized) {
+      const inp = document.getElementById('password-input');
+      inp.value = '';
+      document.getElementById('password-error').hidden = true;
+      openModal('modal-password');
+      setTimeout(() => inp.focus(), 80);
+    }
+  });
 });
 
 /* --- Edit/Delete buttons on the person page (rendered when in edit mode) --- */
@@ -4048,12 +4236,13 @@ document.getElementById('btn-export-data').addEventListener('click', () => {
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 
-  EDIT.dirty = false;
-  updateDirtyBadge();
+  // Note: with the live backend, downloaded data.js is ONLY a local backup.
+  // The site already saves to the server automatically — you don't need to
+  // upload anything for changes to go live.
   const w = document.getElementById('edit-banner-warning');
   w.hidden = false;
   w.innerHTML =
-    'data.js indirildi · klasördekinin üzerine yaz · rebuild komutunu çalıştır → güncel index.html\'i Netlify\'a sürükle ' +
+    'data.js yedek dosyası indirildi · güvenli bir yerde sakla. Site zaten sunucuya kaydediyor, ek bir adım gerekmiyor. ' +
     '<button class="btn-edit btn-edit-ghost" onclick="this.parentElement.hidden=true" style="margin-left:12px;padding:3px 9px;font-size:11px;">tamam</button>';
 });
 
@@ -4086,7 +4275,7 @@ document.getElementById('btn-draft-restore').addEventListener('click', () => {
   rebuildAllIndexes();
   EDIT.dirty = true;
   setEditModeUI(true);
-  updateDirtyBadge();
+  updateStatusBadge();
   closeModal('modal-draft-restore');
   if (STATE.currentPage === 'tree') {
     STATE._lastTreeCenter = null;
@@ -4095,6 +4284,9 @@ document.getElementById('btn-draft-restore').addEventListener('click', () => {
     if (BY_ID[STATE.currentPerson]) selectPerson(STATE.currentPerson);
     else showPage('home', true);
   }
+  // Try to push the restored draft to the server immediately. If the user
+  // is unlocked and online, the local draft becomes live in one round-trip.
+  pushPeopleToServer();
 });
 document.getElementById('btn-draft-discard').addEventListener('click', () => {
   discardDraft();
@@ -4104,14 +4296,39 @@ document.getElementById('btn-draft-discard').addEventListener('click', () => {
 /* ============================================================
    STARTUP
    ============================================================ */
-// Apply initial route from URL hash (deep links / shared URLs)
+// Render synchronously with whatever PEOPLE_DATA is embedded in the page —
+// the user sees something immediately, then we update from the server below.
 applyRoute();
 
-// If the user previously unlocked edit mode, restore the banner UI
-if (isEditUnlocked()) setEditModeUI(true);
+// Async bootstrap: pull fresh data from /api/people, restore stored password,
+// then offer draft restore if there's something local that conflicts.
+(async () => {
+  // 1. Fresh data from server (replaces embedded if blob has been seeded).
+  const remote = await fetchPeopleFromServer();
+  if (Array.isArray(remote) && remote.length >= 2) {
+    PEOPLE.length = 0;
+    remote.forEach(p => PEOPLE.push(p));
+    rebuildAllIndexes();
+    if (STATE.currentPage === 'tree') {
+      STATE._lastTreeCenter = null;
+      renderTree();
+    } else if (STATE.currentPage === 'person' && STATE.currentPerson) {
+      if (BY_ID[STATE.currentPerson]) selectPerson(STATE.currentPerson);
+      else showPage('home', true);
+    }
+  }
 
-// If there's an unsaved draft, ask whether to restore it
-offerDraftRestoreIfStale();
+  // 2. If a verified password is in localStorage and still valid, open the
+  //    edit banner silently (no prompt).
+  await tryRestoreFromStoredPassword();
+
+  // 3. If there's a draft from a failed previous save, ask whether to restore.
+  //    (Skip silently when no draft exists.)
+  offerDraftRestoreIfStale();
+
+  // Refresh the relative-time badge every 30s ("kaydedildi · 2 dk önce" → "3 dk önce")
+  setInterval(updateStatusBadge, 30000);
+})();
 
 // On startup, focus the home search input only when we land on home with no hash
 if (!location.hash && STATE.currentPage === 'home') {

@@ -30,7 +30,7 @@ Write-Host ""
 Write-Host ("[OK] index.html guncellendi ({0:N0} byte)" -f $sz) -ForegroundColor Green
 Write-Host ""
 Write-Host "Sonraki adim:" -ForegroundColor Cyan
-Write-Host "  1. Netlify panelini ac:  https://app.netlify.com/" -ForegroundColor Cyan
-Write-Host "  2. ahmetsoyu sitesine git" -ForegroundColor Cyan
-Write-Host "  3. index.html dosyasini deploy alanina birak (drag-and-drop)" -ForegroundColor Cyan
+Write-Host "  VS Code'da Source Control panelini ac (Ctrl+Shift+G)" -ForegroundColor Cyan
+Write-Host "  Mesaj yaz, commit (cek), sonra Sync (yukari ok) bas." -ForegroundColor Cyan
+Write-Host "  Netlify GitHub'dan otomatik cekecek - 30-60 sn sonra canlida." -ForegroundColor Cyan
 Write-Host ""

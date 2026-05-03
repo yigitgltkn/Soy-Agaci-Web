@@ -27,3 +27,9 @@ _scratch*.py
 
 # Logs
 *.log
+
+# Node — Netlify Functions deps installed during build, never locally tracked
+node_modules/
+
+# Netlify CLI local state
+.netlify/

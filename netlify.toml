@@ -1,0 +1,20 @@
+# Netlify build / functions configuration.
+# Triggered on every push to the linked GitHub repo (main branch).
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+  # No build command — site is pre-built (index.html already has data inlined).
+
+[functions]
+  # Modern functions runtime (v2). Files in netlify/functions/*.js are auto-routed.
+  node_bundler = "esbuild"
+
+# Friendlier API URLs: /api/people instead of /.netlify/functions/people.
+# Each function also declares its own `path` via export const config; this
+# redirect is a fallback for environments that don't honor that.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+  force = false
